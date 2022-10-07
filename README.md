@@ -27,7 +27,7 @@ Input File: example.txt
 ```
 ```bash
 Output
-    latitude longitude distance_from_previous_point total_distance
+    # latitude longitude distance_from_previous_point total_distance
     33.65007 130.21171 0 0
     33.64949 130.21234 86.91245 86.91245
     33.64918 130.21232 34.43400 121.34645
