@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# 効能書きとヘルプ出力の兼用
+show_help () {
+    cat <<EOS 1>&2
+calcdist v1.0    mugi-grainp
+Licensed by MIT License
+
+標準入力から入力された緯度・経度の群から距離を計算し、
+標準出力に出力する
+
+Usage: $0 [-h] [-t input_separator] [-o output_separator]
+    -t input_separator   入力の区切り文字を input_separator にする
+                         デフォルトは半角スペース
+    -o output_separator  出力の区切り文字を output_separator にする
+                         デフォルトは半角スペース
+    -h    このヘルプを表示して終了
+
+入力: 緯度・経度の組
+    33.65007 130.21171
+    33.64949 130.21234
+    33.64918 130.21232
+    33.64785 130.21346
+    33.64682 130.21521
+    33.64560 130.21679
+
+出力
+入力の組に加え、区間距離、距離合計を列として加える
+(区切り文字はoオプションで指定可 デフォルトは半角スペース)
+    33.65007 130.21171 0 0
+    33.64949 130.21234 86.91245 86.91245
+    33.64918 130.21232 34.43400 121.34645
+    33.64785 130.21346 181.50708 302.85353
+    33.64682 130.21521 198.50780 501.36133
+    33.64560 130.21679 199.48357 700.84490
+EOS
+}
+
+# 区切り文字
+input_sep=' '
+output_sep=' '
+
+# オプション解析
+while getopts t:o:h option
+do
+    case $option in
+        t)
+            input_sep=$OPTARG
+            ;;
+        o)
+            output_sep=$OPTARG
+            ;;
+        h)
+            show_help
+            exit 0
+            ;;
+        \?)
+            echo "Usage: $0 [-h] [-t input_separator] [-o output_separator]" 1>&2
+            echo "-h shows command usage details." 1>&2
+            exit 1
+            ;;
+    esac
+done
+
+awk -v isep="${input_sep}" -v osep="${output_sep}" \
+    '
+        BEGIN {
+            FS = isep; OFS = osep
+            OFMT = "%.5f"; CONVFMT = "%.5f"
+            before_p_lat = 0; before_p_lng = 0
+            total_distance = 0
+        }
+
+        NR == 1 { before_p_lat = $1; before_p_lng = $2 }
+
+        {
+            dist = distance(before_p_lat, before_p_lng, $1, $2)
+            total_distance += dist
+            print $1, $2, dist, total_distance
+            before_p_lat = $1; before_p_lng = $2
+        }
+
+        # 2点間の距離計算
+        function distance(lat1, lng1, lat2, lng2) {
+            radlat1 = degree2radian(lat1)
+            radlng1 = degree2radian(lng1)
+            radlat2 = degree2radian(lat2)
+            radlng2 = degree2radian(lng2)
+
+            diff_lat = radlat1 - radlat2
+            diff_lng = radlng1 - radlng2
+            ave_lat = (radlat1 + radlat2) / 2.0
+
+            rx = 6378137.0
+            ry = 6356752.314245
+            e2 = (rx ** 2 - ry ** 2) / rx ** 2
+
+            w = sqrt(1 - e2 * sin(ave_lat) ** 2)
+            m = rx * (1 - e2) / w ** 3
+            n = rx / w
+            d = sqrt((diff_lat * m) ** 2 + (diff_lng * n * cos(ave_lat)) ** 2)
+
+            return d
+        }
+
+        # 度数表記をラジアン表記に換算
+        function degree2radian(degvalue) {
+            return degvalue * 3.1415926535 / 180
+        }
+    '
+

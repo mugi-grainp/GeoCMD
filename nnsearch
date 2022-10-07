@@ -1,0 +1,155 @@
+#!/bin/bash
+
+# 効能書きとヘルプ出力の兼用
+show_help () {
+    cat <<EOS 1>&2
+nnsearch v1.0    mugi-grainp
+Licensed by MIT License
+
+入力された緯度・経度をもとに、緯度・経度探索候補ファイルから
+最も近いk点を返す
+
+Usage: $0 -f point_list_file [-h] [-k top_k_points] [-d distance] [-t input_separator] [-o output_separator]
+    -f point_list_file    緯度・経度探索候補ファイル。（必須）
+                          point_list_file に書かれた点の中から
+                          最も近い点を探す
+    -k top_k_points       入力された緯度・経度から近い点の
+                          上位 top_k_points 点を返す
+                          デフォルト値は1
+    -d distance           探索範囲を入力された緯度・経度を
+                          中心とした distance[m] に限る
+                          デフォルト値は100
+    -t input_separator    入力の区切り文字を input_separator にする
+                          デフォルトは半角スペース
+    -o output_separator   出力の区切り文字を output_separator にする
+                          デフォルトは半角スペース
+    -h    このヘルプを表示して終了
+EOS
+}
+
+# 探索点数
+top_k_points=1
+# 探索範囲の距離 (m)
+max_distance=100
+# fオプション（必須）が指定されているかどうか
+is_f_opt="no"
+# 区切り文字
+input_sep=' '
+output_sep=' '
+
+# オプション解析
+while getopts f:hk:d:t:o: option
+do
+    case $option in
+        t)
+            input_sep=$OPTARG
+            ;;
+        o)
+            output_sep=$OPTARG
+            ;;
+        f)
+            point_list_file=$OPTARG
+            is_f_opt="yes"
+            ;;
+        h)
+            show_help
+            exit 0
+            ;;
+        k)
+            echo "${OPTARG}" | grep -q '[1-9][0-9]*'
+            if [ $? == 1  ]; then
+                echo "E: 探索点数は1以上の整数を指定してください。" 1>&2
+                exit 1
+            fi
+            top_k_points=$OPTARG
+            ;;
+        d)
+            echo "${OPTARG}" | grep -q '[1-9][0-9]*'
+            if [ $? == 1  ]; then
+                echo "E: 探索範囲距離は1以上の整数を指定してください。" 1>&2
+                exit 1
+            fi
+            max_distance=$OPTARG
+            ;;
+        \?)
+            echo "Usage: $0 [-h] [-k top_k_points] [-d distance]" 1>&2
+            echo "-h shows command usage details." 1>&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ "${is_f_opt}" = "no" ]; then
+    echo "Usage: $0 -f point_list_file [-h] [-k top_k_points] [-d distance]" 1>&2
+    echo "E: 探索候補ファイル指定は必須です。-f オプションで指定してください。" 1>&2
+    exit 1
+fi
+
+# 入力された緯度・経度座標に対して出力
+awk -v isep="${input_sep}" \
+    -v osep="${output_sep}" \
+    -v point_list_file=${point_list_file} \
+    -v top_k_points=${top_k_points} \
+    -v max_distance=${max_distance} \
+    '
+        BEGIN {
+            FS = isep; OFS = osep
+            OFMT = "%.5f"; CONVFMT = "%.5f"
+
+            point_count = 0
+            cmd_read_point_list = "cat " point_list_file
+            while ((cmd_read_point_list | getline) > 0) {
+                point_table[point_count, 0] = $1
+                point_table[point_count, 1] = $2
+                point_table[point_count, 2] = $3
+                point_count++
+            }
+            close(cmd_read_point_list)
+        }
+
+        {
+            for (i = 0; i < point_count; i++) {
+                # 距離を測り、また、距離からポイント情報を逆引きするテーブルを作る
+                dist[i] = distance(point_table[i, 0], point_table[i, 1], $1, $2)
+                distance_to_point[dist[i]] = i
+            }
+            asort(dist)
+            for (i = 1; i <= top_k_points; i++) {
+                if (dist[i] <= max_distance) {
+                    idx = distance_to_point[dist[i]]
+                    print $1, $2, point_table[idx, 0], point_table[idx, 1], dist[i], point_table[idx, 2]
+                } else {
+                    print $1, $2, "", "", "", ""
+                }
+            }
+        }
+
+        # 2点間の距離計算
+        function distance(lat1, lng1, lat2, lng2) {
+            radlat1 = degree2radian(lat1)
+            radlng1 = degree2radian(lng1)
+            radlat2 = degree2radian(lat2)
+            radlng2 = degree2radian(lng2)
+
+            diff_lat = radlat1 - radlat2
+            diff_lng = radlng1 - radlng2
+            ave_lat = (radlat1 + radlat2) / 2.0
+
+            rx = 6378137.0
+            ry = 6356752.314245
+            e2 = (rx ** 2 - ry ** 2) / rx ** 2
+
+            w = sqrt(1 - e2 * sin(ave_lat) ** 2)
+            m = rx * (1 - e2) / w ** 3
+            n = rx / w
+            d = sqrt((diff_lat * m) ** 2 + (diff_lng * n * cos(ave_lat)) ** 2)
+
+            return d
+        }
+
+        # 度数表記をラジアン表記に換算
+        function degree2radian(degvalue) {
+            return degvalue * 3.1415926535 / 180
+        }
+    '
+
